@@ -4,7 +4,7 @@ import { getLogger } from "@logtape/logtape";
 import fedi from "./federation.ts";
 import { Layout, Profile, SetupForm } from "./views.tsx";
 import db from "./db.ts";
-import type { User } from "./schema.ts";
+import type { Actor, User } from "./schema.ts";
 
 const logger = getLogger("prototypeMicroblogAP");
 
@@ -13,31 +13,17 @@ app.use(federation(fedi, () => undefined))
 
 app.get("/", (c) => c.text("Hello, Fedify!"));
 
-app.get("/setup", (c) =>
-  c.html(
-    <Layout>
-      <SetupForm />
-    </Layout>,
-  ),
-);
-
-app.post("/setup", async (c) => {
-  // Check if an account already exists
-  const user = db.prepare<unknown[], User>("SELECT * FROM users LIMIT 1").get();
-  if (user != null) return c.redirect("/");
-
-  const form = await c.req.formData();
-  const username = form.get("username");
-  if (typeof username !== "string" || !username.match(/^[a-z0-9_-]{1,50}$/)) {
-    return c.redirect("/setup");
-  }
-  db.prepare("INSERT INTO users (username) VALUES (?)").run(username);
-  return c.redirect("/");
-});
-
 app.get("/setup", (c) => {
-  // Check if an account already exists
-  const user = db.prepare<unknown[], User>("SELECT * FROM users LIMIT 1").get();
+  // Check if the user already exists
+  const user = db
+    .prepare<unknown[], User>(
+      `
+      SELECT * FROM users
+      JOIN actors ON (users.id = actors.user_id)
+      LIMIT 1
+      `,
+    )
+    .get();
   if (user != null) return c.redirect("/");
 
   return c.html(
@@ -49,7 +35,13 @@ app.get("/setup", (c) => {
 
 app.get("/users/:username", async (c) => {
   const user = db
-    .prepare<unknown[], User>("SELECT * FROM users WHERE username = ?")
+    .prepare<unknown[], User>(
+      `
+      SELECT * FROM users
+      JOIN actors ON (users.id = actors.user_id)
+      WHERE username = ?
+      `,
+    )
     .get(c.req.param("username"));
   if (user == null) return c.notFound();
 
@@ -62,4 +54,50 @@ app.get("/users/:username", async (c) => {
   );
 });
 
+app.post("/setup", async (c) => {
+  // Check if an account already exists
+  const user = db
+    .prepare<unknown[], User>(
+      `
+      SELECT * FROM users
+      JOIN actors ON (users.id = actors.user_id)
+      LIMIT 1
+      `,
+    )
+    .get();
+  if (user != null) return c.redirect("/");
+
+  const form = await c.req.formData();
+  const username = form.get("username");
+  if (typeof username !== "string" || !username.match(/^[a-z0-9_-]{1,50}$/)) {
+    return c.redirect("/setup");
+  }
+  const name = form.get("name");
+  if (typeof name !== "string" || name.trim() === "") {
+    return c.redirect("/setup");
+  }
+  const url = new URL(c.req.url);
+  const handle = `@${username}@${url.host}`;
+  const ctx = fedi.createContext(c.req.raw, undefined);
+  db.transaction(() => {
+    db.prepare("INSERT OR REPLACE INTO users (id, username) VALUES (1, ?)").run(
+      username,
+    );
+    db.prepare(
+      `
+      INSERT OR REPLACE INTO actors
+        (user_id, uri, handle, name, inbox_url, shared_inbox_url, url)
+      VALUES (1, ?, ?, ?, ?, ?, ?)
+    `,
+    ).run(
+      ctx.getActorUri(username).href,
+      handle,
+      name,
+      ctx.getInboxUri(username).href,
+      ctx.getInboxUri().href,
+      ctx.getActorUri(username).href,
+    );
+  })();
+  return c.redirect("/");
+});
 export default app;
