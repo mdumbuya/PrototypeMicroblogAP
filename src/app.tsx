@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { federation } from "@fedify/fedify/x/hono";
 import { getLogger } from "@logtape/logtape";
 import fedi from "./federation.ts";
-import { Layout, Profile, SetupForm } from "./views.tsx";
+import { Layout, Profile, SetupForm, FollowerList } from "./views.tsx";
 import db from "./db.ts";
 import type { Actor, User } from "./schema.ts";
 
@@ -44,15 +44,34 @@ app.get("/users/:username", async (c) => {
     )
     .get(c.req.param("username"));
   if (user == null) return c.notFound();
+  
+
+  // biome-ignore lint/style/noNonNullAssertion: Always returns a single record
+  const { followers } = db
+    .prepare<unknown[], { followers: number }>(
+      `
+      SELECT count(*) AS followers
+      FROM follows
+      JOIN actors ON follows.following_id = actors.id
+      WHERE actors.user_id = ?
+      `,
+    )
+    .get(user.id)!;
 
   const url = new URL(c.req.url);
   const handle = `@${user.username}@${url.host}`;
   return c.html(
     <Layout>
-      <Profile name={user.username} handle={handle} />
+      <Profile
+        name={user.name ?? user.username}
+        username={user.username}
+        handle={handle}
+        followers={followers}
+      />
     </Layout>,
   );
 });
+
 
 app.post("/setup", async (c) => {
   // Check if an account already exists
@@ -100,4 +119,26 @@ app.post("/setup", async (c) => {
   })();
   return c.redirect("/");
 });
+
+app.get("/users/:username/followers", async (c) => {
+  const followers = db
+    .prepare<unknown[], Actor>(
+      `
+      SELECT followers.*
+      FROM follows
+      JOIN actors AS followers ON follows.follower_id = followers.id
+      JOIN actors AS following ON follows.following_id = following.id
+      JOIN users ON users.id = following.user_id
+      WHERE users.username = ?
+      ORDER BY follows.created DESC
+      `,
+    )
+    .all(c.req.param("username"));
+  return c.html(
+    <Layout>
+      <FollowerList followers={followers} />
+    </Layout>,
+  );
+});
+
 export default app;
