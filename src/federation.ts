@@ -1,8 +1,9 @@
-import { Accept, Follow, Endpoints, Person, Undo, createFederation, MemoryKvStore, InProcessMessageQueue, exportJwk, generateCryptoKeyPair, getActorHandle, importJwk, type Recipient } from "@fedify/fedify";
+import { Accept, Follow, Endpoints, Person, Undo, Note,  PUBLIC_COLLECTION, createFederation, MemoryKvStore, InProcessMessageQueue, exportJwk, generateCryptoKeyPair, getActorHandle, importJwk, type Recipient } from "@fedify/fedify";
 
 import { getLogger } from "@logtape/logtape";
 import db from "./db.ts";
-import type { Actor, User, Key } from "./schema.ts";
+import type { Actor, User, Key, Post } from "./schema.ts";
+import { Temporal } from "@js-temporal/polyfill";
 
 const logger = getLogger("prototypeMicroblogAP");
 
@@ -222,5 +223,34 @@ federation
       .get(identifier);
     return result == null ? 0 : result.cnt;
   });
+
+federation.setObjectDispatcher(
+  Note,
+  "/users/{identifier}/posts/{id}",
+  (ctx, values) => {
+    const post = db
+      .prepare<unknown[], Post>(
+        `
+        SELECT posts.*
+        FROM posts
+        JOIN actors ON actors.id = posts.actor_id
+        JOIN users ON users.id = actors.user_id
+        WHERE users.username = ? AND posts.id = ?
+        `,
+      )
+      .get(values.identifier, values.id);
+    if (post == null) return null;
+    return new Note({
+      id: ctx.getObjectUri(Note, values),
+      attribution: ctx.getActorUri(values.identifier),
+      to: PUBLIC_COLLECTION,
+      cc: ctx.getFollowersUri(values.identifier),
+      content: post.content,
+      mediaType: "text/html",
+      published: Temporal.Instant.from(`${post.created.replace(" ", "T")}Z`),
+      url: ctx.getObjectUri(Note, values),
+    });
+  },
+);
 
 export default federation;
