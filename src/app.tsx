@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { federation } from "@fedify/fedify/x/hono";
 import { getLogger } from "@logtape/logtape";
 import fedi from "./federation.ts";
-import { Layout, Profile, SetupForm, FollowerList, Home, PostPage } from "./views.tsx";
+import { Layout, Profile, PostList, SetupForm, FollowerList, Home, PostPage } from "./views.tsx";
 import db from "./db.ts";
 import type { Actor, Post, User } from "./schema.ts";
 import { Create, Note } from "@fedify/fedify";
@@ -78,6 +78,18 @@ app.get("/users/:username", async (c) => {
       `,
     )
     .get(user.id)!;
+  
+  const posts = db
+  .prepare<unknown[], Post & Actor>(
+    `
+    SELECT actors.*, posts.*
+    FROM posts
+    JOIN actors ON posts.actor_id = actors.id
+    WHERE actors.user_id = ?
+    ORDER BY posts.created DESC
+    `,
+  )
+  .all(user.user_id);
 
   const url = new URL(c.req.url);
   const handle = `@${user.username}@${url.host}`;
@@ -89,6 +101,7 @@ app.get("/users/:username", async (c) => {
         handle={handle}
         followers={followers}
       />
+      <PostList posts={posts} />
     </Layout>,
   );
 });
