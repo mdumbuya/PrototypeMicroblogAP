@@ -66,6 +66,16 @@ app.get("/users/:username", async (c) => {
     .get(c.req.param("username"));
   if (user == null) return c.notFound();
   
+  const { following } = db
+  .prepare<unknown[], { following: number }>(
+    `
+    SELECT count(*) AS following
+    FROM follows
+    JOIN actors ON follows.follower_id = actors.id
+    WHERE actors.user_id = ?
+    `,
+  )
+  .get(user.id)!;
 
   // biome-ignore lint/style/noNonNullAssertion: Always returns a single record
   const { followers } = db
@@ -99,6 +109,7 @@ app.get("/users/:username", async (c) => {
         name={user.name ?? user.username}
         username={user.username}
         handle={handle}
+        following={following}
         followers={followers}
       />
       <PostList posts={posts} />
@@ -250,21 +261,22 @@ app.get("/users/:username/posts/:id", (c) => {
   if (post == null) return c.notFound();
 
   // biome-ignore lint/style/noNonNullAssertion: Always returns a single record
-  const { followers } = db
-    .prepare<unknown[], { followers: number }>(
+  const { following, followers } = db
+    .prepare<unknown[], { following: number; followers: number }>(
       `
-      SELECT count(*) AS followers
+      SELECT sum(follows.follower_id = ?) AS following,
+             sum(follows.following_id = ?) AS followers
       FROM follows
-      WHERE follows.following_id = ?
       `,
     )
-    .get(post.actor_id)!;
+    .get(post.actor_id, post.actor_id)!;
   return c.html(
     <Layout>
       <PostPage
         name={post.name ?? post.username}
         username={post.username}
         handle={post.handle}
+        following={following}
         followers={followers}
         post={post}
       />
