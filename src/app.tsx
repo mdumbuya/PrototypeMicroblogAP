@@ -25,11 +25,28 @@ app.get("/", (c) => {
       `,
     )
     .get();
+
   if (user == null) return c.redirect("/setup");
 
+  const posts = db
+    .prepare<unknown[], Post & Actor>(
+      `
+      SELECT actors.*, posts.*
+      FROM posts
+      JOIN actors ON posts.actor_id = actors.id
+      WHERE posts.actor_id = ? OR posts.actor_id IN (
+        SELECT following_id
+        FROM follows
+        WHERE follower_id = ?
+      )
+      ORDER BY posts.created DESC
+      `,
+    )
+    .all(user.id, user.id);
+    
   return c.html(
     <Layout>
-      <Home user={user} />
+      <Home user={user} posts={posts} />
     </Layout>,
   );
 });
