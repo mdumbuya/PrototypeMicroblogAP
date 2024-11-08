@@ -5,7 +5,7 @@ import fedi from "./federation.ts";
 import { Layout, Profile, PostList, SetupForm, FollowerList, Home, PostPage } from "./views.tsx";
 import db from "./db.ts";
 import type { Actor, Post, User } from "./schema.ts";
-import { Create, Note } from "@fedify/fedify";
+import { Create, Follow, isActor, lookupObject, Note } from "@fedify/fedify";
 import { stringifyEntities } from "stringify-entities";
 
 
@@ -270,6 +270,30 @@ app.get("/users/:username/posts/:id", (c) => {
       />
     </Layout>,
   );
+});
+
+app.post("/users/:username/following", async (c) => {
+  const username = c.req.param("username");
+  const form = await c.req.formData();
+  const handle = form.get("actor");
+  if (typeof handle !== "string") {
+    return c.text("Invalid actor handle or URL", 400);
+  }
+  const actor = await lookupObject(handle.trim());
+  if (!isActor(actor)) {
+    return c.text("Invalid actor handle or URL", 400);
+  }
+  const ctx = fedi.createContext(c.req.raw, undefined);
+  await ctx.sendActivity(
+    { identifier: username },
+    actor,
+    new Follow({
+      actor: ctx.getActorUri(username),
+      object: actor.id,
+      to: actor.id,
+    }),
+  );
+  return c.text("Successfully sent a follow request");
 });
 
 export default app;
