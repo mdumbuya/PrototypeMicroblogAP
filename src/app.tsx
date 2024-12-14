@@ -1,17 +1,19 @@
-import { Hono } from "hono";
+import { Create, Follow, Note, isActor, lookupObject } from "@fedify/fedify";
 import { federation } from "@fedify/fedify/x/hono";
 import { getLogger } from "@logtape/logtape";
-import fedi from "./federation.ts";
-import { Layout, Profile, PostList, SetupForm, FollowerList, FollowingList, Home, PostPage } from "./views.tsx";
-import db from "./db.ts";
-import type { Actor, Post, User } from "./schema.ts";
-import { Create, Follow, isActor, lookupObject, Note } from "@fedify/fedify";
+import { Hono } from "hono";
+import fetch from 'node-fetch';
 import { stringifyEntities } from "stringify-entities";
-
+import db from "./db.ts";
+import fedi from "./federation.ts";
+import type { Actor, Post, User } from "./schema.ts";
+import { FollowerList, FollowingList, Home, Layout, PostList, PostPage, Profile, SetupForm } from "./views.tsx";
 
 const logger = getLogger("prototypeMicroblogAP");
+import dotenv from 'dotenv';
 
 const app = new Hono();
+dotenv.config();
 app.use(federation(fedi, () => undefined))
 
 app.get("/", (c) => {
@@ -344,6 +346,151 @@ app.get("/users/:username/following", async (c) => {
       <FollowingList following={following} />
     </Layout>,
   );
+});
+
+// This will handle the start of the verification process
+app.post('/api/verify/start', async (c) => {
+  try {
+    const res = await fetch('http://localhost:8000/api/verify/start'); 
+    if (!res.ok) {
+      throw new Error(`HTTP error! status: ${res.status}`);
+    }
+    const { url, request_id } = await res.json();
+
+    //Improved error handling and URL validation
+    if (!url || typeof url !== 'string') {
+      return c.json({ error: 'Invalid URL received from verification service' }, 500);
+    }
+
+    //Use the received URL directly instead of modifying it.
+    return c.json({ url: url, request_id }); // Directly use the url from the response
+
+  } catch (err) {
+    console.error('Error during verification start:', err);
+    return c.json({ error: 'Failed to start verification flow' }, 500);
+  }
+});
+
+
+// This will handle the polling for the verification status
+app.post('/api/verify/check', async (c) => {
+  const { request_id } = await c.req.json();
+  
+  try {
+    const res = await fetch('http://localhost:8000/api/verify/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ request_id })
+    });
+    const data = await res.json();
+    
+    // If verified, return the data
+    if (data.status === 'verified') {
+      return c.json(data);
+    } else {
+      // For other statuses, return a status update
+      return c.json({ status: data.status });
+    }
+  } catch (err) {
+    console.error('Error during check:', err);
+    return c.json({ error: 'Verification check failed' }, 500);
+  }
+});
+  
+// Main route serving the frontend HTML page
+app.get('/login', (c) => {
+  return c.html(`
+    <html>
+      <head>
+        <title>Verifier App Demo</title>
+        <link rel="stylesheet" href="/styles.css">
+      </head>
+      <body>
+        <div id="app">
+          <h1>Credential Verification</h1>
+          <button id="start-btn">Start Presentation Flow</button>
+          <div id="status-container"></div>
+          <div id="presentation-container"></div>
+        </div>
+
+        <script>
+          let loading = false;
+          let presentation = null;
+          let status = "";
+          let url = "";
+          
+          const startBtn = document.getElementById("start-btn");
+          const statusContainer = document.getElementById("status-container");
+          const presentationContainer = document.getElementById("presentation-container");
+
+          // Handle presentation flow start
+          startBtn.addEventListener('click', async () => {
+            loading = true;
+            statusContainer.innerHTML = 'Loading...';
+            presentationContainer.innerHTML = '';
+            try {
+              const res = await fetch('http://localhost:8000/api/verify/start', { method: 'POST' });
+              const { url: walletUrl, request_id } = await res.json();
+              // Check if url is defined and a string before using it.
+              if (url && typeof url === 'string') {
+                  statusContainer.innerHTML = \`Click <a href="\${url}" target="_blank" rel="noreferrer">HERE</a> to open wallet and preset your credential\`;
+                  const pollForPresentation = async () => {
+                const checkRes = await fetch('http://localhost:8000/api/verify/check', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ request_id })
+                });
+                const data = await checkRes.json();
+
+                if (data.status === 'verified') {
+                  presentation = data.presentation;
+                  presentationContainer.innerHTML = '<pre>' + JSON.stringify(presentation, null, 4) + '</pre>';
+                } else {
+                  statusContainer.innerHTML = \`Status: \${data.status}\`;
+                  setTimeout(pollForPresentation, 1000);
+                }
+              };
+
+              pollForPresentation();
+              
+              } else {
+                  statusContainer.innerHTML = 'Error: Invalid or missing URL from verification service.';
+              }
+
+            } catch (err) {
+              console.error(err);
+              statusContainer.innerHTML = 'Error during verification process.';
+            } finally {
+              loading = false;
+            }
+          });
+        </script>
+      </body>
+    </html>
+  `);
+});
+
+// Static assets (e.g., CSS)
+app.get('/styles.css', (c) => {
+  return c.body(`
+    body {
+      font-family: Arial, sans-serif;
+    }
+    h1 {
+      color: #333;
+    }
+    #start-btn {
+      padding: 10px 20px;
+      font-size: 16px;
+      background-color: #007BFF;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    #start-btn:hover {
+      background-color: #0056b3;
+    }
+  `, { contentType: 'text/css' });
 });
 
 export default app;

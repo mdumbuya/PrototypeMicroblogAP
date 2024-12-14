@@ -1,9 +1,28 @@
-import { Accept, Follow, Create, Endpoints, Person, Undo, Note,  PUBLIC_COLLECTION, createFederation, MemoryKvStore, InProcessMessageQueue, exportJwk, generateCryptoKeyPair, getActorHandle, importJwk, isActor,   type Actor as APActor, type Recipient } from "@fedify/fedify";
+import {
+  type Actor as APActor,
+  Accept,
+  Create,
+  Endpoints,
+  Follow,
+  InProcessMessageQueue,
+  MemoryKvStore,
+  Note,
+  PUBLIC_COLLECTION,
+  Person,
+  type Recipient,
+  Undo,
+  createFederation,
+  exportJwk,
+  generateCryptoKeyPair,
+  getActorHandle,
+  importJwk,
+  isActor,
+} from "@fedify/fedify";
 
+import { Temporal } from "@js-temporal/polyfill";
 import { getLogger } from "@logtape/logtape";
 import db from "./db.ts";
-import type { Actor, User, Key, Post } from "./schema.ts";
-import { Temporal } from "@js-temporal/polyfill";
+import type { Actor, Key, Post, User } from "./schema.ts";
 
 const logger = getLogger("prototypeMicroblogAP");
 
@@ -71,7 +90,7 @@ federation
       url: ctx.getActorUri(identifier),
       publicKey: keys[0].cryptographicKey,
       assertionMethods: keys.map((k) => k.multikey),
-      followers: ctx.getFollowersUri(identifier),  
+      followers: ctx.getFollowersUri(identifier),
     });
   })
   .setKeyPairsDispatcher(async (ctx, identifier) => {
@@ -124,7 +143,7 @@ federation
     return pairs;
   });
 
-  federation
+federation
   .setInboxListeners("/users/{identifier}/inbox", "/inbox")
   .on(Follow, async (ctx, follow) => {
     if (follow.objectId == null) {
@@ -162,7 +181,7 @@ federation
         { object },
       );
     }
-    const followerId = (await persistActor(follower))?.id;  
+    const followerId = (await persistActor(follower))?.id;
     // const followerId = db
     //   .prepare<unknown[], Actor>(
     //     `
@@ -197,7 +216,8 @@ federation
       object: follow,
     });
     await ctx.sendActivity(object, follower, accept);
-  }).on(Undo, async (ctx, undo) => {
+  })
+  .on(Undo, async (ctx, undo) => {
     const object = await undo.getObject();
     if (!(object instanceof Follow)) return;
     if (undo.actorId == null || object.objectId == null) return;
@@ -214,7 +234,8 @@ federation
       ) AND follower_id = (SELECT id FROM actors WHERE uri = ?)
       `,
     ).run(parsed.identifier, undo.actorId.href);
-  }).on(Accept, async (ctx, accept) => {
+  })
+  .on(Accept, async (ctx, accept) => {
     const follow = await accept.getObject();
     if (!(follow instanceof Follow)) return;
     const following = await accept.getActor();
@@ -239,7 +260,8 @@ federation
       )
       `,
     ).run(followingId, parsed.identifier);
-  }).on(Create, async (ctx, create) => {
+  })
+  .on(Create, async (ctx, create) => {
     const object = await create.getObject();
     if (!(object instanceof Note)) return;
     const actor = create.actorId;
@@ -255,7 +277,7 @@ federation
     ).run(object.id.href, actorId, content, object.url?.href);
   });
 
-  federation
+federation
   .setFollowersDispatcher(
     "/users/{identifier}/followers",
     (ctx, identifier, cursor) => {
